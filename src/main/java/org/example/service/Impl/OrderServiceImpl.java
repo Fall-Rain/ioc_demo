@@ -7,17 +7,13 @@ import org.example.service.UserService;
 
 @Service
 public class OrderServiceImpl implements OrderService {
-
+    @Autowirte
     private UserService userService;
 
-
-    @Autowirte
-    public void setUserService(UserService userService) {
-        this.userService = userService;
-    }
 
     @Override
     public void say() {
         System.out.println("hello OrderService");
+        userService.sss();
     }
 }

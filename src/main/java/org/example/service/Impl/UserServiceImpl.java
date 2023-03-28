@@ -8,25 +8,19 @@ import org.example.utils.Utils;
 
 @Service
 public class UserServiceImpl implements UserService {
-
+    @Autowirte
     private OrderService orderService;
-
+    @Autowirte
     private Utils utils;
 
-    @Autowirte
-    public UserServiceImpl(OrderService orderService, Utils utils) {
-        this.orderService = orderService;
-        this.utils = utils;
-    }
-
-    public UserServiceImpl(OrderService orderService) {
-        this.orderService = orderService;
+    @Override
+    public void sss() {
+        System.out.println("hello UserService");
     }
 
     @Override
     public void say() {
-        System.out.println("hello UserService");
+        System.out.println("hello");
         orderService.say();
-        utils.sss();
     }
 }

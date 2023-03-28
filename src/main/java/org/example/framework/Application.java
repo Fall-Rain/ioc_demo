@@ -15,9 +15,14 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class Application {
-    private Map<String, Object> map = new HashMap<>();
-    private Map<String, Object> L1cache = new HashMap();
+
+
+    private Map<String, Object> singletonObjects = new HashMap<>();
+    private Map<String, Object> earlySingletonObjects = new HashMap<>();
+    private Map<String, Object> singletonFactories = new HashMap<>();
+
     private Map<Class<?>, List<String>> allBeanNamesByType = new HashMap<>();
+
 
     public List<BeanPostProcessor> beanPostProcessors = new ArrayList();
 
@@ -33,16 +38,18 @@ public class Application {
         String path = resource.getPath();
         path = path.substring(0, path.indexOf("/class"));
         List<Class> classList = getClassNameByFile(path);
-        configurationInit(classList);
-        serviceInit(classList);
+        List<Object> configurationBean = constructor(classList.stream().filter(e -> e.isAnnotationPresent(Configuration.class)).collect(Collectors.toList()));
+        configurationInit(configurationBean);
+        List<Object> serviceBean = constructor(classList.stream().filter(e -> e.isAnnotationPresent(Service.class)).collect(Collectors.toList()));
+        serviceInit(serviceBean);
         return this;
     }
 
     public <T> T getBean(String beanName) {
-        if (!map.containsKey(beanName)) {
+        if (!singletonObjects.containsKey(beanName)) {
             throw new RuntimeException("找不到bean:" + beanName);
         }
-        return (T) map.get(beanName);
+        return (T) singletonObjects.get(beanName);
     }
 
     public <T> T getBean(Class<T> aClass) {
@@ -65,23 +72,28 @@ public class Application {
         return getBean(name);
     }
 
-    private Object getBeanCache(String name) {
-        if (map.containsKey(name)) {
-            return map.get(name);
+    private Object getBeanCache(String name) throws Exception {
+        if (singletonObjects.containsKey(name)) {
+            return singletonObjects.get(name);
         }
-        if (L1cache.containsKey(name)) {
-            return L1cache.get(name);
+        if (earlySingletonObjects.containsKey(name)) {
+            return earlySingletonObjects.get(name);
         }
         return null;
     }
 
-    public Object getBeanCache(Class clazz) {
-        String name = clazz.getSimpleName();
-        if (map.containsKey(name)) {
-            return map.get(name);
+    private Object getBeanCache(String name, Class clazz) throws Exception {
+        Object bean = getBeanCache(name);
+        if (Objects.nonNull(bean)) {
+            return bean;
         }
-        if (L1cache.containsKey(name)) {
-            return L1cache.get(name);
+        return getBeanCache(clazz);
+    }
+
+    public Object getBeanCache(Class clazz) throws Exception {
+        Object bean = getBeanCache(clazz.getSimpleName());
+        if (Objects.nonNull(bean)) {
+            return bean;
         }
         List<String> list = allBeanNamesByType.get(clazz);
         if (Objects.isNull(list)) {
@@ -90,107 +102,65 @@ public class Application {
         if (list.size() != 1) {
             throw new RuntimeException("找到多个Bean:" + clazz.getName());
         }
-        name = allBeanNamesByType.get(clazz).get(0);
-        if (map.containsKey(name)) {
-            return map.get(name);
-        }
-        if (L1cache.containsKey(name)) {
-            return L1cache.get(name);
-        }
-        return null;
+        return getBeanCache(allBeanNamesByType.get(clazz).iterator().next());
     }
 
-    public void configurationInit(List<Class> classes) throws Exception {
-        List<Class> cacheClass = new ArrayList<>();
-        for (Class aClass : classes) {
-            Configuration service = (Configuration) aClass.getAnnotation(Configuration.class);
-            if (Objects.isNull(service)) {
-                continue;
+    public String transformedBeanName(Class aclass) {
+        if (aclass.isAnnotationPresent(Service.class)) {
+            Service service = (Service) aclass.getAnnotation(Service.class);
+            if (Objects.nonNull(service.value()) && !service.value().isEmpty()) {
+                return service.value();
             }
-            String key = aClass.getSimpleName();
-            Object bean = constructor(aClass);
-            if (Objects.isNull(bean)) {
-                cacheClass.add(aClass);
-                continue;
-            }
+        }
+        return aclass.getSimpleName();
+    }
+
+    public void configurationInit(List<Object> beans) throws Exception {
+        if (beans.isEmpty()) {
+            return;
+        }
+        List<Object> result = new ArrayList<>();
+        for (Object bean : beans) {
+            String beanName = transformedBeanName(bean.getClass());
             if (autowirteInjection(bean)) {
-                map.put(key, bean);
+                singletonObjects.put(transformedBeanName(bean.getClass()), bean);
                 if (bean instanceof BeanPostProcessor) {
                     beanPostProcessors.add((BeanPostProcessor) bean);
                 }
-            } else {
-                L1cache.put(key, bean);
+                earlySingletonObjects.remove(beanName);
+            }else {
+                earlySingletonObjects.put(beanName,bean);
+                result.add(bean);
             }
         }
-        if (cacheClass.size() != 0) {
-            configurationInit(cacheClass);
-            return;
+        if (!result.isEmpty()) {
+            configurationInit(result);
         }
-        Iterator<Map.Entry<String, Object>> iterator = L1cache.entrySet().iterator();
-        while (iterator.hasNext()) {
-            Map.Entry<String, Object> entry = iterator.next();
-            if (autowirteInjection(entry.getValue())) {
-                map.put(entry.getValue().getClass().getSimpleName(), entry.getValue());
-                if (entry.getValue() instanceof BeanPostProcessor) {
-                    beanPostProcessors.add((BeanPostProcessor) entry.getValue());
-                }
-                iterator.remove();
-            }
-        }
+
     }
 
-    public void serviceInit(List<Class> classes) throws Exception {
-        List<Class> cacheClass = new ArrayList<>();
-        for (Class aClass : classes) {
-            Service service = (Service) aClass.getAnnotation(Service.class);
-            if (Objects.isNull(service)) {
-                continue;
-            }
-            String key = aClass.getSimpleName();
-            if (Objects.nonNull(service.value()) && !service.value().isEmpty()) {
-                key = service.value();
-            }
-            Object bean = constructor(aClass);
-            if (Objects.isNull(bean)) {
-                cacheClass.add(aClass);
-                continue;
-            }
-            if (autowirteInjection(bean)) {
-                for (BeanPostProcessor beanPostProcessor : beanPostProcessors) {
-                    beanPostProcessor.postProcessBeforeInitialization(bean, key);
-                }
-                map.put(key, bean);
-                for (BeanPostProcessor beanPostProcessor : beanPostProcessors) {
-                    beanPostProcessor.postProcessAfterInitialization(bean, key);
-                }
-            } else {
-                L1cache.put(key, bean);
-            }
-        }
-        if (cacheClass.size() != 0) {
-            serviceInit(cacheClass);
+    public void serviceInit(List<Object> serviceBeans) throws Exception {
+        if (serviceBeans.isEmpty()) {
             return;
         }
-        Iterator<Map.Entry<String, Object>> iterator = L1cache.entrySet().iterator();
-        while (iterator.hasNext()) {
-            Map.Entry<String, Object> entry = iterator.next();
-            if (autowirteInjection(entry.getValue())) {
-                Object bean = entry.getValue();
-                String key = entry.getKey();
-                for (BeanPostProcessor beanPostProcessor : beanPostProcessors) {
-                    bean = beanPostProcessor.postProcessBeforeInitialization(bean, key);
-                }
-                map.put(key, bean);
-                for (BeanPostProcessor beanPostProcessor : beanPostProcessors) {
-                    beanPostProcessor.postProcessAfterInitialization(bean, key);
-                }
-                iterator.remove();
+        List<Object> resultBean = new ArrayList<>();
+        for (Object serviceBean : serviceBeans) {
+            String beanName = transformedBeanName(serviceBean.getClass());
+            if(autowirteInjection(serviceBean)){
+                singletonObjects.put(transformedBeanName(serviceBean.getClass()), serviceBean);
+                earlySingletonObjects.remove(beanName);
+            }else {
+                earlySingletonObjects.put(beanName,serviceBean);
+                resultBean.add(serviceBean);
             }
+        }
+        if (!resultBean.isEmpty()) {
+            configurationInit(resultBean);
         }
     }
 
 
-    public boolean autowirteInjection(Object bean) throws IllegalAccessException, InvocationTargetException {
+    public boolean autowirteInjection(Object bean) throws Exception {
         List<Field> fieldList = Stream.of(Arrays.asList(bean.getClass().getFields()), Arrays.asList(bean.getClass().getDeclaredFields()))
                 .flatMap(Collection::stream)
                 .filter(e -> e.isAnnotationPresent(Autowirte.class))
@@ -202,10 +172,7 @@ public class Application {
                 .distinct()
                 .collect(Collectors.toList());
         for (Field field : fieldList) {
-            Object paramBean = getBeanCache(field.getName());
-            if (Objects.isNull(paramBean)) {
-                paramBean = getBeanCache(field.getType());
-            }
+            Object paramBean = getBeanCache(field.getName(), field.getType());
             if (Objects.isNull(paramBean)) {
                 return false;
             }
@@ -216,10 +183,7 @@ public class Application {
             List<Object> params = new ArrayList<>();
             Parameter[] parameters = method.getParameters();
             for (Parameter parameter : parameters) {
-                Object parameterBean = getBeanCache(parameter.getName());
-                if (Objects.isNull(parameterBean)) {
-                    parameterBean = getBeanCache(parameter.getType());
-                }
+                Object parameterBean = getBeanCache(parameter.getName(), parameter.getType());
                 if (Objects.isNull(parameterBean)) {
                     return false;
                 }
@@ -231,46 +195,62 @@ public class Application {
         return true;
     }
 
-    public Object constructor(Class classes) throws InvocationTargetException, InstantiationException, IllegalAccessException, NoSuchMethodException {
-        Constructor defaultConstructor = null;
-        Constructor autowriteConstructor = null;
-        Set<Constructor> set = new HashSet<>();
-        set.addAll(Arrays.asList(classes.getConstructors()));
-        set.addAll(Arrays.asList(classes.getDeclaredConstructors()));
-        if (set.size() == 1) {
-            defaultConstructor = set.iterator().next();
-        }
-        for (Constructor constructor : set) {
-            Annotation annotation = constructor.getAnnotation(Autowirte.class);
-            if (Objects.nonNull(annotation)) {
-                if (Objects.isNull(autowriteConstructor)) {
-                    autowriteConstructor = constructor;
-                } else {
-                    throw new RuntimeException("存在多个autowrite" + classes.getSimpleName());
+    public List<Object> constructor(List<Class> classList) throws Exception {
+        List<Class> resultClass = new ArrayList<>();
+        List<Object> beans = new ArrayList<>();
+        for (Class classes : classList) {
+            Constructor defaultConstructor = null;
+            Constructor autowriteConstructor = null;
+            Set<Constructor> constructorSet = new HashSet<>();
+            constructorSet.addAll(Arrays.asList(classes.getConstructors()));
+            constructorSet.addAll(Arrays.asList(classes.getDeclaredConstructors()));
+            if (constructorSet.size() == 1) {
+                defaultConstructor = constructorSet.iterator().next();
+            }
+            List<Constructor> constructorList = constructorSet.stream().filter(e -> e.isAnnotationPresent(Autowirte.class)).collect(Collectors.toList());
+            if (constructorList.size() > 1) {
+                throw new RuntimeException("存在多个autowrite" + classes.getSimpleName());
+            }
+            if (constructorList.size() == 1) {
+                autowriteConstructor = constructorList.get(0);
+            }
+            Constructor constructor = null;
+
+            if (Objects.nonNull(autowriteConstructor)) {
+                constructor = autowriteConstructor;
+            } else if (Objects.nonNull(defaultConstructor)) {
+                constructor = defaultConstructor;
+            }
+            Object objectBean = null;
+            if (Objects.isNull(constructor)) {
+                objectBean = classes.newInstance();
+            } else {
+                List<Object> params = new ArrayList<>();
+                boolean flag = true;
+                for (Parameter parameter : constructor.getParameters()) {
+                    Object bean = getBeanCache(parameter.getName(), parameter.getType());
+                    if (Objects.isNull(bean)) {
+                        flag = false;
+                        break;
+                    }
+                    params.add(bean);
+                }
+                if (flag) {
+                    constructor.setAccessible(true);
+//                    objectBean = classes.getConstructor(constructor.getParameterTypes()).newInstance(params.toArray());
+                    objectBean = constructor.newInstance(params.toArray());
                 }
             }
-        }
-        Constructor constructor;
-        if (Objects.nonNull(autowriteConstructor)) {
-            constructor = autowriteConstructor;
-        } else if (Objects.nonNull(defaultConstructor)) {
-            constructor = defaultConstructor;
-        } else {
-            return classes.newInstance();
-        }
-        List<Object> params = new ArrayList<>();
-        for (Parameter parameter : constructor.getParameters()) {
-            Object bean = getBeanCache(parameter.getName());
-            if (Objects.isNull(bean)) {
-                bean = getBeanCache(parameter.getType());
+            if (Objects.nonNull(objectBean)) {
+                beans.add(objectBean);
+            } else {
+                resultClass.add(classes);
             }
-            if (Objects.isNull(bean)) {
-                return null;
-            }
-            params.add(bean);
         }
-        constructor.setAccessible(true);
-        return constructor.newInstance(params.toArray());
+        if (!resultClass.isEmpty()) {
+            beans.add(constructor(resultClass));
+        }
+        return beans;
     }
 
 
