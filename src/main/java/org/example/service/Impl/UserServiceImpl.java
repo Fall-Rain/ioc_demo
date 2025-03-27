@@ -4,23 +4,24 @@ import org.example.annotation.Autowirte;
 import org.example.annotation.Service;
 import org.example.service.OrderService;
 import org.example.service.UserService;
-import org.example.utils.Utils;
 
 @Service
 public class UserServiceImpl implements UserService {
-    @Autowirte
+    //    @Autowirte
     private OrderService orderService;
-    @Autowirte
-    private Utils utils;
 
-    @Override
-    public void sss() {
-        System.out.println("hello UserService");
+    public UserServiceImpl(OrderService orderService) {
+        this.orderService = orderService;
     }
 
     @Override
     public void say() {
-        System.out.println("hello");
+        System.out.println("UserServiceImpl say");
         orderService.say();
+    }
+
+    @Override
+    public void processUser() {
+        System.out.println("UserServiceImpl processUser");
     }
 }

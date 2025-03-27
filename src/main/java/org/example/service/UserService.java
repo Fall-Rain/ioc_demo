@@ -2,5 +2,5 @@ package org.example.service;
 
 public interface UserService {
     void say();
-    void sss();
+    void processUser();
 }

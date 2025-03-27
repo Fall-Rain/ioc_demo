@@ -10,10 +10,9 @@ public class OrderServiceImpl implements OrderService {
     @Autowirte
     private UserService userService;
 
-
     @Override
     public void say() {
-        System.out.println("hello OrderService");
-        userService.sss();
+        System.out.println("OrderServiceImpl say");
+        userService.processUser();
     }
 }
